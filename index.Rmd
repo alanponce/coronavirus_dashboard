@@ -3,8 +3,8 @@ title: "COVID-19"
 output: 
   flexdashboard::flex_dashboard:
     theme: cosmo
+    social: [ "twitter", "facebook", "linkedin", "menu" ]
     orientation: rows
-    social: menu
     source_code: embed
     vertical_layout: fill
     logo: logo-mcd-circ-60.png
@@ -19,7 +19,7 @@ library(flexdashboard)
 # Aqui cargamos los datos de coronavirus de JHU
 
 
-`%>%` <- magrittr::`%>%`  #  Creo no es necesario, ya funciona asi por default (probar)
+`%>%` <- magrittr::`%>%`  
 
 #------------------ Colores ------------------
 # Set colors
@@ -36,21 +36,17 @@ archivo <- format(Sys.Date() - 1, "%m-%d-%Y.csv")
 df <- read.csv(paste(direccion, archivo, sep='')) 
 
 df_concentrado <- df %>% 
-  dplyr::group_by(Country_Region) %>%     # Regrupa por pais, aunque lo podría hacer por región
+  dplyr::group_by(Country_Region) %>%     
   dplyr::summarise(
     Confirmados = sum(Confirmed),
     Recuperados = sum(Recovered),
     Decesos = sum(Deaths)) %>%
   dplyr::mutate(
-    Activos = Confirmados - ifelse(is.na(Recuperados), 0, Recuperados) - ifelse(is.na(Decesos), 0, Decesos)
+    Activos = Confirmados - ifelse(is.na(Recuperados), 0, Recuperados) 
+              - ifelse(is.na(Decesos), 0, Decesos)
     ) %>%
   dplyr::filter( 
-    Country_Region == 'Mexico' | 
-    Country_Region ==  'US' | 
-    Country_Region ==  'Italy' | 
-    Country_Region ==  'Spain' | 
-    Country_Region ==  'Argentina' | 
-    Country_Region == 'Brazil'
+    Country_Region %in% c('Mexico', 'US', 'Italy', 'Spain', 'Argentina', 'Brazil')
     ) %>%
   dplyr::mutate(Pais = factor(Country_Region, levels = Country_Region)) %>%
   dplyr::arrange(- Confirmados) %>%
@@ -77,6 +73,7 @@ lee_serie <-function (dir, nombre){
         `Estado` = `Province/State`) %>%
       dplyr::filter( fecha > "2020-02-27")
 }
+
 df_serie <- lee_serie(dir_confirmados, 'Confirmados') %>%
   dplyr::inner_join(lee_serie(dir_recuperados, 'Recuperados')) %>%
   dplyr::inner_join(lee_serie(dir_decesos, 'Decesos'))
@@ -89,41 +86,24 @@ df_concentrado_serie <- df_serie %>%
     Decesos = sum(Decesos)
     ) %>%
   dplyr::mutate(
-    Activos = Confirmados - ifelse(is.na(Recuperados), 0, Recuperados) - ifelse(is.na(Decesos), 0, Decesos)
+    Activos = Confirmados - ifelse(is.na(Recuperados), 0, Recuperados) 
+               - ifelse(is.na(Decesos), 0, Decesos)
     ) %>%
   dplyr::filter( 
-    Pais == 'Mexico' | 
-    Pais ==  'US' | 
-    Pais ==  'Italy' | 
-    Pais ==  'Spain' | 
-    Pais ==  'Argentina' | 
-    Pais == 'Brazil'
+    Pais %in% c('Mexico', 'US', 'Italy', 'Spain', 'Argentina', 'Brazil')
     ) %>%
   dplyr::mutate(Pais = factor(Pais, levels = Pais))
 
-max_date <- max(df_serie$fecha)
-df_trends <- df_serie %>% 
-  dplyr::group_by(Pais, fecha) %>%
-  dplyr::summarise(
-    Confirmados = sum(Confirmados),
-    Recuperados = sum(Recuperados),
-    Decesos = sum(Decesos)
-    ) %>%
-  dplyr::arrange(-Confirmados) %>%
-  dplyr::filter( 
-    Pais == 'Mexico' | 
-    Pais ==  'US' | 
-    Pais ==  'Italy' | 
-    Pais ==  'Spain' | 
-    Pais ==  'Argentina' | 
-    Pais == 'Brazil'
-    ) %>%
-  dplyr::arrange(fecha) %>%
+df_concentrado_serie <- df_concentrado_serie %>%
+  dplyr::group_by(Pais) %>%
   dplyr::mutate(
-    T_Confirmados = c(0, diff(Confirmados)),
-    T_Recuperados = c(0, diff(Recuperados)),
-    T_Decesos = c(0, diff(Decesos)),
+    T_Confirmados = Confirmados - dplyr::lag(Confirmados, n= 1, default = NA),
+    T_Recuperados = Recuperados - dplyr::lag(Recuperados, n= 1, default = NA),
+    T_Decesos = Decesos - dplyr::lag(Decesos, n= 1, default = NA),
     )
+
+max_date <- max(df_serie$fecha)
+
 
 ```
 
@@ -184,7 +164,7 @@ Row
 
 
 plotly::plot_ly(data = df_concentrado, 
-                x = ~ Pais, 
+                x = ~ reorder(Pais, Confirmados), 
                 y = ~ Activos, 
                 type = "bar", 
                 name = "Activos",
@@ -285,59 +265,91 @@ Mapa
 # map tab added by Art Steinmetz
 library(leaflet)
 library(leafpop)
-library(purrr)
 
 cv_data_for_plot <- df %>% 
   dplyr::filter(Confirmed > 0) %>% 
-  dplyr::group_by(Country_Region, Province_State, Lat, Long_) %>% 
+  dplyr::group_by(Country_Region, Province_State, Lat, Long_, Admin2) %>% 
   dplyr::summarise(
     Confirmados = sum(Confirmed),
     Recuperados = sum(Recovered),
-    Decesos = sum(Deaths)
+    Decesos = sum(Deaths),
+    Activos = sum(Active)
     ) %>% 
-  dplyr::mutate(log_cases = 2 * log(Confirmados)) %>%
-  tidyr::pivot_longer(cols = c("Confirmados", "Decesos", "Recuperados"), 
-                      names_to = "tipo" )
+  dplyr::rename(
+    Pais = Country_Region,
+    Estado = Province_State,
+    Municipio = Admin2
+    ) %>%
+  dplyr::mutate(log_cases = 2 * log(Confirmados)) 
 
-pal <- colorFactor(c("orange", "red","green"), domain = c("Confirmados","Decesos","Recuperados"))
-cv_data_for_plot.split <- cv_data_for_plot %>% split(cv_data_for_plot$tipo)
+pal <- colorFactor(
+  c("red"), 
+  domain = c("Confirmados"))
 
-map_object <- leaflet() %>% addProviderTiles(providers$Stamen.Toner)
+map_object <- leaflet(options = leafletOptions(minZoom = 3, maxZoom = 10)) %>% 
+  addProviderTiles(providers$Stamen.Toner) %>%
+  setView(
+    lng = -105.167,
+    lat = 27.683,
+    zoom = 6
+    )
 
-names(cv_data_for_plot.split) %>%
-  purrr::walk( 
-    function(df) {
-      map_object <<- map_object %>%
-        addCircleMarkers(
-          data=cv_data_for_plot.split[[df]],
-          lng=~Long_, lat=~Lat,
-#         label=~as.character(cases),
-          color = ~pal(tipo),
-          stroke = FALSE,
-          fillOpacity = 0.8,
-          radius = ~log_cases,
-          popup =  leafpop::popupTable(
-            cv_data_for_plot.split[[df]],
-            feature.id = FALSE,
-            row.numbers = FALSE,
-            zcol=c("tipo", "value","Country_Region", "Province_State")
-          ),
-          group = df,
-          labelOptions = labelOptions(
-              noHide = F,
-              direction = 'auto'
-          ),
-
-          # clusterOptions = markerClusterOptions(removeOutsideVisibleBounds = F),
-        )
-    }
+map_object <<- map_object %>%
+  addCircleMarkers(
+  data=cv_data_for_plot,
+  lng=~Long_, lat=~Lat,
+  label=~as.character(Confirmados),
+  color = ~pal("Confirmados"),
+  stroke = FALSE,
+  fillOpacity = 0.8,
+  radius = ~log_cases,
+  popup =  leafpop::popupTable(
+    cv_data_for_plot,
+    feature.id = FALSE,
+    row.numbers = FALSE,
+    zcol=c("Pais", "Estado","Municipio", "Confirmados", "Recuperados", "Decesos")
+    ),
+  labelOptions = labelOptions(
+    noHide = F,
+    direction = 'auto'
+    )
   )
-  
-map_object %>%
-  addLayersControl(
-    overlayGroups = names(cv_data_for_plot),
-    options = layersControlOptions(collapsed = FALSE) 
-  )
+map_object
+
+# names(cv_data_for_plot.split) %>%
+#   purrr::walk( 
+#     function(df) {
+#       map_object <<- map_object %>%
+#         addCircleMarkers(
+#           data=cv_data_for_plot.split[[df]],
+#           lng=~Long_, lat=~Lat,
+# #         label=~as.character(cases),
+#           color = ~pal(tipo),
+#           stroke = FALSE,
+#           fillOpacity = 0.8,
+#           radius = ~log_cases,
+#           popup =  leafpop::popupTable(
+#             cv_data_for_plot.split[[df]],
+#             feature.id = FALSE,
+#             row.numbers = FALSE,
+#             zcol=c("tipo", "value","Country_Region", "Province_State")
+#           ),
+#           group = df,
+#           labelOptions = labelOptions(
+#               noHide = F,
+#               direction = 'auto'
+#           ),
+# 
+#           # clusterOptions = markerClusterOptions(removeOutsideVisibleBounds = F),
+#         )
+#     }
+#   )
+#   
+# map_object %>%
+#   addLayersControl(
+#     overlayGroups = names(cv_data_for_plot.split),
+#     options = layersControlOptions(collapsed = FALSE) 
+#   )
 ```
 
 Tendencia
@@ -350,12 +362,15 @@ Column {data-width=400}
 ### **Casos nuevos para el (`r  max(df_serie$fecha)`)**
     
 ```{r}
-df_trends %>%   dplyr::filter(fecha == max_date) %>%
-  plotly::plot_ly(x = ~Pais,
-                  y = ~T_Confirmados,
+df_concentrado_serie %>%   
+  dplyr::filter(fecha == max_date) %>%
+  dplyr::arrange(T_Confirmados) %>%
+  plotly::plot_ly(x = ~T_Confirmados,
+                  y = ~reorder(Pais, T_Confirmados),
                   text = ~T_Confirmados,
                   textposition = 'auto',
-                  type = "bar") %>%
+                  type = "bar", 
+                  orientation = 'h') %>%
   plotly::layout(yaxis = list(title = "Casos nuevos"),
                  xaxis = list(title = ""),
                  margin =  list(
@@ -373,7 +388,7 @@ df_trends %>%   dplyr::filter(fecha == max_date) %>%
     
 ```{r}
 
-df_trends %>% 
+df_concentrado_serie %>% 
   plotly::plot_ly(x = ~fecha, 
                   y = ~T_Confirmados,
                   type = "scatter", 
@@ -424,13 +439,13 @@ df_concentrado %>%
 ### **Casos nuevos por pais al `r  max(df_concentrado_serie$fecha)`**
     
 ```{r}
-df_trends %>% 
+df_concentrado_serie %>% 
   dplyr::filter(fecha == max(fecha)) %>%
   dplyr::select(Pais, T_Confirmados, T_Recuperados, T_Decesos) %>%  
   DT::datatable(
     rownames = FALSE,
     colnames = c("País", "Inc. Confirmados", "Inc. Recuperados", "Inc. Decesos"),
-                options = list(pageLength = nrow(df_trends), dom = 'tip'))
+                options = list(pageLength = nrow(df_concentrado_serie), dom = 'tip'))
 ```
 
 Acerca de
@@ -456,7 +471,7 @@ Los datos se actualizan cada día a media noche) y se pueden obtener [aquí](htt
 
 **Reproducibilidad**
 
-El tablero se genera diariamente como una página web estática, por lo que se puede subir en cualquier sitio. Si deseas utilizarla, puede realizar un *fork* al proyecto en github, descargarlo, modificarlo y publicar un tablero similar en las páginas web que desees.
+El tablero se genera diariamente como una página web estática, por lo que se puede subir en cualquier sitio. Si deseas utilizarla, puede realizar un *fork* al [proyecto en github](https://github.com/mcd-unison/coronavirus_dashboard), descargarlo, modificarlo y publicar un tablero similar en las páginas web que desees.
 
 Para mayores preguntas puede contactar a [O. Gutú](mailto:olivia.gutu@unison.mx), [J.P. Soto](mailto:juanpablo.soto@unison.mx) o a [J. Waissman](mailto:julio.waissman@unison.mx).
 
